@@ -1,12 +1,15 @@
 package main
 
 import (
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"time"
 
 	vault "github.com/hashicorp/vault/api"
+	_ "github.com/snowflakedb/gosnowflake"
 )
 
 type VaultConfig struct {
@@ -20,7 +23,6 @@ type VaultConfig struct {
 type SnowflakeCredentials struct {
 	User     string `json:"username"`
 	Password string `json:"password"`
-	Account  string `json:"account"`
 }
 
 func main() {
@@ -31,6 +33,12 @@ func main() {
 		Path:              os.Getenv("VAULT_PATH"),
 		SecretsEnginePath: os.Getenv("VAULT_SECRETS_ENGINE_PATH"),
 		SnowflakeRole:     os.Getenv("VAULT_SNOWFLAKE_ROLE"),
+	}
+
+	snowflakeAccount := os.Getenv("SNOWFLAKE_ACCOUNT")
+
+	if snowflakeAccount == "" {
+		log.Fatalf("SNOWFLAKE_ACCOUNT environment variable not set")
 	}
 
 	// Authenticate to Vault using Kubernetes service account
@@ -47,16 +55,55 @@ func main() {
 	}
 	vaultClient.SetToken(token)
 
-	// Read Snowflake credentials from Vault
-	snowflakeCredentials, err := readSnowflakeCredentials(vaultClient, vaultConfig.SnowflakeRole, vaultConfig.SecretsEnginePath)
-	if err != nil {
-		log.Fatalf("failed to read Snowflake credentials from Vault: %v", err)
-	}
+	for {
+		// Verify the Vault token is still valid
+		if err := verifyToken(vaultClient); err != nil {
+			log.Printf("Vault token is invalid: %v", err)
+			token, err = loginWithKubernetes(vaultClient, vaultConfig)
+			if err != nil {
+				log.Fatalf("failed to login to Vault: %v", err)
+			}
+			vaultClient.SetToken(token)
+		}
 
-	// Output the credentials
-	fmt.Printf("Snowflake User: %s\n", snowflakeCredentials.User)
-	fmt.Printf("Snowflake Password: %s\n", snowflakeCredentials.Password)
-	fmt.Printf("Snowflake Account: %s\n", snowflakeCredentials.Account)
+		// Read Snowflake credentials from Vault
+		snowflakeCredentials, err := readSnowflakeCredentials(vaultClient, vaultConfig.SnowflakeRole, vaultConfig.SecretsEnginePath)
+		if err != nil {
+			log.Fatalf("failed to read Snowflake credentials from Vault: %v", err)
+		}
+
+		// Output the credentials
+		fmt.Printf("Snowflake User: %s\n", snowflakeCredentials.User)
+		fmt.Printf("Snowflake Password: %s\n", snowflakeCredentials.Password)
+		fmt.Printf("Snowflake Account: %s\n", snowflakeAccount)
+
+		// Connect to Snowflake
+		dsn := fmt.Sprintf("%s:%s@%s", snowflakeCredentials.User, snowflakeCredentials.Password, snowflakeAccount)
+		db, err := sql.Open("snowflake", dsn)
+		if err != nil {
+			log.Fatalf("failed to connect to Snowflake: %v", err)
+		}
+
+		// Query Snowflake
+		rows, err := db.Query("SELECT C_NAME FROM SNOWFLAKE_SAMPLE_DATA.TPCH_SF1.CUSTOMER LIMIT 1")
+		if err != nil {
+			log.Fatalf("failed to query Snowflake: %v", err)
+		}
+		defer 
+
+		// Print results
+		for rows.Next() {
+			var c_name string
+			if err := rows.Scan(&c_name); err != nil {
+				log.Fatalf("failed to scan row: %v", err)
+			}
+			fmt.Printf("Customer Name: %s\n", c_name)
+		}
+
+		db.Close()
+		rows.Close()
+		time.Sleep(10 * time.Second)
+	}
 }
 
 func loginWithKubernetes(vaultClient *vault.Client, config VaultConfig) (string, error) {
@@ -80,6 +127,11 @@ func loginWithKubernetes(vaultClient *vault.Client, config VaultConfig) (string,
 	}
 
 	return resp.Auth.ClientToken, nil
+}
+
+func verifyToken(vaultClient *vault.Client) error {
+	_, err := vaultClient.Auth().Token().LookupSelf()
+	return err
 }
 
 func readSnowflakeCredentials(vaultClient *vault.Client, role string, enginepath string) (*SnowflakeCredentials, error) {
