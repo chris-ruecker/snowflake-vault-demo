@@ -36,15 +36,20 @@ func main() {
 	}
 
 	snowflakeAccount := os.Getenv("SNOWFLAKE_ACCOUNT")
+	snowflakeWarehouse := os.Getenv("SNOWFLAKE_WAREHOUSE")
 
 	if snowflakeAccount == "" {
 		log.Fatalf("SNOWFLAKE_ACCOUNT environment variable not set")
+	}
+	if snowflakeWarehouse == "" {
+		log.Fatalf("SNOWFLAKE_WAREHOUSE environment variable not set")
 	}
 
 	// Authenticate to Vault using Kubernetes service account
 	vaultClient, err := vault.NewClient(&vault.Config{
 		Address: vaultConfig.Address,
 	})
+
 	if err != nil {
 		log.Fatalf("failed to create Vault client: %v", err)
 	}
@@ -53,6 +58,7 @@ func main() {
 	if err != nil {
 		log.Fatalf("failed to login to Vault: %v", err)
 	}
+
 	vaultClient.SetToken(token)
 
 	for {
@@ -78,7 +84,7 @@ func main() {
 		fmt.Printf("Snowflake Account: %s\n", snowflakeAccount)
 
 		// Connect to Snowflake
-		dsn := fmt.Sprintf("%s:%s@%s", snowflakeCredentials.User, snowflakeCredentials.Password, snowflakeAccount)
+		dsn := fmt.Sprintf("%s:%s@%s?warehouse=%s", snowflakeCredentials.User, snowflakeCredentials.Password, snowflakeAccount, snowflakeWarehouse)
 		db, err := sql.Open("snowflake", dsn)
 		if err != nil {
 			log.Fatalf("failed to connect to Snowflake: %v", err)
@@ -109,6 +115,7 @@ func loginWithKubernetes(vaultClient *vault.Client, config VaultConfig) (string,
 	// Read the JWT from the Kubernetes service account
 	jwt, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
 	if err != nil {
+
 		return "", fmt.Errorf("failed to read service account token: %w", err)
 	}
 
