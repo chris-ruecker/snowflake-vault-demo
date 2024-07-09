@@ -41,6 +41,7 @@ func main() {
 	if snowflakeAccount == "" {
 		log.Fatalf("SNOWFLAKE_ACCOUNT environment variable not set")
 	}
+
 	if snowflakeWarehouse == "" {
 		log.Fatalf("SNOWFLAKE_WAREHOUSE environment variable not set")
 	}
@@ -54,23 +55,25 @@ func main() {
 		log.Fatalf("failed to create Vault client: %v", err)
 	}
 
-	token, err := loginWithKubernetes(vaultClient, vaultConfig)
+	tokenSecret, err := loginWithKubernetes(vaultClient, vaultConfig)
 	if err != nil {
 		log.Fatalf("failed to login to Vault: %v", err)
 	}
 
-	vaultClient.SetToken(token)
+	vaultClient.SetToken(tokenSecret.Auth.ClientToken)
 
 	for {
-		// Verify the Vault token is still valid
+
 		if err := verifyToken(vaultClient); err != nil {
 			log.Printf("Vault token is invalid: %v", err)
-			token, err = loginWithKubernetes(vaultClient, vaultConfig)
+			tokenSecret, err = loginWithKubernetes(vaultClient, vaultConfig)
 			if err != nil {
 				log.Fatalf("failed to login to Vault: %v", err)
 			}
-			vaultClient.SetToken(token)
+			vaultClient.SetToken(tokenSecret.Auth.ClientToken)
 		}
+
+		fmt.Printf("Vault token is valid for %s", tokenSecret.Auth.LeaseDuration)
 
 		// Read Snowflake credentials from Vault
 		snowflakeCredentials, err := readSnowflakeCredentials(vaultClient, vaultConfig.SnowflakeRole, vaultConfig.SecretsEnginePath)
@@ -111,12 +114,12 @@ func main() {
 	}
 }
 
-func loginWithKubernetes(vaultClient *vault.Client, config VaultConfig) (string, error) {
+func loginWithKubernetes(vaultClient *vault.Client, config VaultConfig) (*vault.Secret, error) {
 	// Read the JWT from the Kubernetes service account
 	jwt, err := os.ReadFile("/var/run/secrets/kubernetes.io/serviceaccount/token")
 	if err != nil {
 
-		return "", fmt.Errorf("failed to read service account token: %w", err)
+		return nil, fmt.Errorf("failed to read service account token: %w", err)
 	}
 
 	// Prepare login request
@@ -129,14 +132,15 @@ func loginWithKubernetes(vaultClient *vault.Client, config VaultConfig) (string,
 	path := fmt.Sprintf("auth/%s/login", config.Path)
 	resp, err := vaultClient.Logical().Write(path, loginData)
 	if err != nil {
-		return "", fmt.Errorf("failed to login to Vault: %w", err)
+		return nil, fmt.Errorf("failed to login to Vault: %w", err)
 	}
 
-	return resp.Auth.ClientToken, nil
+	return resp, nil
 }
 
 func verifyToken(vaultClient *vault.Client) error {
-	_, err := vaultClient.Auth().Token().LookupSelf()
+	sec, err := vaultClient.Auth().Token().LookupSelf()
+	fmt.Println(sec.Renewable)
 	return err
 }
 
