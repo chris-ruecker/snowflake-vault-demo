@@ -89,7 +89,6 @@ func main() {
 		if err != nil {
 			log.Fatalf("failed to query Snowflake: %v", err)
 		}
-		defer 
 
 		// Print results
 		for rows.Next() {
