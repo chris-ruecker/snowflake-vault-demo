@@ -1,5 +1,5 @@
 # Step 1: Build the Go application
-FROM golang:1.22 as builder
+FROM golang:1.22 AS builder
 
 # Set the Current Working Directory inside the container
 WORKDIR /app
@@ -14,7 +14,7 @@ RUN go mod download
 COPY . .
 
 # Build the Go app
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o main .
+RUN CGO_ENABLED=0 GOOS=linux go build -o main .
 
 # Step 2: Create the Distroless container
 FROM gcr.io/distroless/base-debian12
